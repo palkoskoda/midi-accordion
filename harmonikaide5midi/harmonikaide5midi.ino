@@ -22,15 +22,16 @@
 
 unsigned int input_raw[NUM_BUTTONS];
 unsigned char inputMidiMem[NUM_BUTTONS];
-unsigned int vstupmax[NUM_BUTTONS];
-unsigned int inputInbornBias[NUM_BUTTONS]; // bias od poskladania (asi ho dam do EEPROM)
+int vstupmax[NUM_BUTTONS];
+int inputInbornBias[NUM_BUTTONS]; // bias od poskladania (asi ho dam do EEPROM)
 int inputFluctBias[NUM_BUTTONS]; // dotiahnutie kludoveho stavu k nule
 //int inputStaticBias = 0; //spuosobení hlavne osvetlením
 unsigned int kalibracia = 100;
 int inputPre[NUM_BUTTONS]; //predspracovane vstupi
 int inputNorm[NUM_BUTTONS]; //normalizovane vstupi
+int inputNorm1[NUM_BUTTONS]; //normalizovane vstupi
 int notePitches[NUM_BUTTONS]; //nacita z eepromky ktori snimac ma ktori ton
-
+int staticBias;
 
 void setup() {
   pinMode(SIGNAL_INPUT, INPUT);  //zbernica z fototranzistorov
@@ -41,6 +42,7 @@ void setup() {
 
   for (int i = 0; i <= NUM_BUTTONS; i++) { //nacitanie viski tonov
     EEPROM.get(i * 4, notePitches[i]);
+
   }
 
   for (int i = 0; i < 10; i++) //naseka 10 jednotiek do radu
@@ -69,11 +71,11 @@ void loop() {
 
 
     ///midi
-    inputPre[i] = input_raw[i] - inputInbornBias[i] ; //predspracovane vstupi
-    inputNorm[i] = (inputPre[i]) * 100 / vstupmax[i];
-
+    inputPre[i] = input_raw[i] - (inputInbornBias[i]  + inputFluctBias[i]/2) ; //predspracovane vstupi
+    inputNorm[i] = (inputPre[i]) * 100 / (vstupmax[i]+70);
+    
     if (kalibracia == 0) midiSend(i);
-
+    inputNorm1[i]=inputNorm[i];
 
     if (analogRead(SIGNAL_STARTER) > 400)   {  //tu snima SIGNAL_STARTER, podla neho sinchronizuje meranie mala by na nom bit log 1, ale ked je inputPre napajani tak radsej 400/1024
       i = 60; break;
@@ -86,16 +88,15 @@ void loop() {
 
   if (kalibracia == 0) {
 
-    //inputStaticBias = calcInputStaticBias();
     calcInputBias();
 
     for (int i = 0; i < NUM_BUTTONS; i++)  { //meria priebezne maximum vstupov
-      vstupmax[i] = max(vstupmax[i], inputPre[i]); //toto bude velmi citlive na nahodne spicki, treba to spravit zivsie, alebo ukladat do pamete pri montazi
+        vstupmax[i] = max(vstupmax[i], inputPre[i]-70); //toto bude velmi citlive na nahodne spicki, treba to spravit zivsie, alebo ukladat do pamete pri montazi
     }
   }
 
   if (kalibracia != 0) { //prve kola nekalibruje
-    if (kalibracia < 20) { //poslednich 20 si robí priemer
+    if (kalibracia < 50) { //poslednich 20 si robí priemer
       for (int x = 0; x < NUM_BUTTONS; x++)  {
         inputInbornBias[x] = (inputInbornBias[x] * 3 + input_raw[x]) / 4;
       }
@@ -110,14 +111,16 @@ void loop() {
 
 
 void midiSend(int i) {
-  if (inputPre[i] > 30) {
-    //Serial.println("cislo: " + String(i) + ", nazov: " + String(notePitches[i]) + " hodnota: " + String(inputPre)); //toto sa zide pri nastavovani
-    if (inputMidiMem[notePitches[i]] != 0) {
+      //Serial.println("cislo: " + String(i) + ", nazov: " + String(notePitches[i]) +" hodnota: " + String(inputPre[i]) + " bias " + String(inputFluctBias[i]) + " static " + String(staticBias)); //toto sa zide pri nastavovani
+
+  if (inputNorm[i] > (40 + staticBias) and notePitches[i]!=0)  {
+    if (inputMidiMem[notePitches[i]] != 0) {     
+      //Serial.println("cislo: " + String(i)+ " dev " + String(abs(inputNorm[i]-inputNorm1[i])) +" norm: " + String(inputNorm[i])+ " hodnota: " + String(inputPre[i]) + " bias " + String(inputFluctBias[i])); //toto sa zide pri nastavovani
       Serial.write(0x91); //cmd
       Serial.write(notePitches[i] + TRANSPO); //pitch
-      Serial.write(127); //velocity
-    }
-    inputMidiMem[notePitches[i]] = 1;
+      Serial.write(constrain((inputNorm[i]-inputNorm1[i])*2, 10, 127)); //velocity
+      }
+      inputMidiMem[notePitches[i]] = 1;
   }
   if (inputMidiMem[notePitches[i]] == 0) { // ak pride 1 zahra ton, nastavi do nuli, ak je v nule tak uz nezahra a ak nepride znova 1 tak nastavi do -1 a vipne ton
     Serial.write(0x81); //cmd
@@ -134,7 +137,7 @@ void calcInputBias() {
   for (i = 0; i < NUM_BUTTONS / 2; i++) {//vipocitam priemer
     avg += inputPre[i];
   }
-  avg=avg / i;
+  avg = avg / i;
 
   byte j = 0;
   int avg2 = 0;
@@ -144,14 +147,19 @@ void calcInputBias() {
       j++;
     }
   }
-  char staticBias = avg2 / j;
+  staticBias = avg2 / (j + 2);
 
   for (i = 0; i < NUM_BUTTONS; i++) { //toto treba este spomalit
-    if (10 > (inputPre[i] - staticBias) > 1)
-      inputInbornBias[i] += 1;
-    if ((inputPre[i] - staticBias) < -1)
-      inputInbornBias[i] -= 1;
+    if ((40) > (inputPre[i]) > 1)
+      inputFluctBias[i] += 1;
+    if ((inputPre[i]) < -1)
+      inputFluctBias[i] -= 1;
+    inputFluctBias[i]=constrain(inputFluctBias[i], -100, 100);
+
   }
+  /*Serial.write(0x81); //cmd
+    Serial.write(1); //pitch
+    Serial.write(); //velocity*/
 }
 
 
