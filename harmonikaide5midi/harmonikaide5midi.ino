@@ -25,7 +25,7 @@ unsigned char inputMidiMem[NUM_BUTTONS];
 unsigned int vstupmax[NUM_BUTTONS];
 unsigned int inputInbornBias[NUM_BUTTONS]; // bias od poskladania (asi ho dam do EEPROM)
 int inputFluctBias[NUM_BUTTONS]; // dotiahnutie kludoveho stavu k nule
-int inputStaticBias = 0; //spuosobení hlavne osvetlením
+//int inputStaticBias = 0; //spuosobení hlavne osvetlením
 unsigned int kalibracia = 100;
 int inputPre[NUM_BUTTONS]; //predspracovane vstupi
 int inputNorm[NUM_BUTTONS]; //normalizovane vstupi
@@ -69,9 +69,9 @@ void loop() {
 
 
     ///midi
-    inputPre[i] = input_raw[i] - inputInbornBias[i] - inputStaticBias; //predspracovane vstupi
-    inputNorm[i] = inputPre[i]*100/vstupmax[i]; 
-    
+    inputPre[i] = input_raw[i] - inputInbornBias[i] ; //predspracovane vstupi
+    inputNorm[i] = (inputPre[i]) * 100 / vstupmax[i];
+
     if (kalibracia == 0) midiSend(i);
 
 
@@ -82,9 +82,12 @@ void loop() {
 
   }
 
+  //////////////////////koniec meracej slucki/////////////////////////////////////////////////////
+
   if (kalibracia == 0) {
 
-    inputStaticBias = calcInputStaticBias();
+    //inputStaticBias = calcInputStaticBias();
+    calcInputBias();
 
     for (int i = 0; i < NUM_BUTTONS; i++)  { //meria priebezne maximum vstupov
       vstupmax[i] = max(vstupmax[i], inputPre[i]); //toto bude velmi citlive na nahodne spicki, treba to spravit zivsie, alebo ukladat do pamete pri montazi
@@ -94,7 +97,7 @@ void loop() {
   if (kalibracia != 0) { //prve kola nekalibruje
     if (kalibracia < 20) { //poslednich 20 si robí priemer
       for (int x = 0; x < NUM_BUTTONS; x++)  {
-        inputInbornBias[x] = (inputInbornBias[x]*3 + input_raw[x]) / 4;
+        inputInbornBias[x] = (inputInbornBias[x] * 3 + input_raw[x]) / 4;
       }
     }
     if (kalibracia == 1) Serial.println("skalibrovane"); //posledne kolo vipise
@@ -125,24 +128,31 @@ void midiSend(int i) {
   if (inputMidiMem[notePitches[i]] == 1) inputMidiMem[notePitches[i]] = 0;
 }
 
-int calcInputStaticBias() {
+void calcInputBias() {
   byte i;
   int avg = 0;
-
-  for (i = 0; i < NUM_BUTTONS / 2; i++) {
+  for (i = 0; i < NUM_BUTTONS / 2; i++) {//vipocitam priemer
     avg += inputPre[i];
   }
-  avg / i;
+  avg=avg / i;
 
-  int j = 0;
+  byte j = 0;
   int avg2 = 0;
-  for (i = 0; i < NUM_BUTTONS / 2; i++) {
+  for (i = 0; i < NUM_BUTTONS / 2; i++) { //z toho priemeru podpriemernix
     if (inputPre[i] < avg) {
       avg2 += inputPre[i];
       j++;
     }
   }
+  char staticBias = avg2 / j;
 
-  return avg2 / j;
+  for (i = 0; i < NUM_BUTTONS; i++) { //toto treba este spomalit
+    if (10 > (inputPre[i] - staticBias) > 1)
+      inputInbornBias[i] += 1;
+    if ((inputPre[i] - staticBias) < -1)
+      inputInbornBias[i] -= 1;
+  }
 }
+
+
 

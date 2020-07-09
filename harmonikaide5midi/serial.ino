@@ -5,7 +5,7 @@ String namebuffer;
 bool valueflag;
 bool nameflag;
 
-String commands[17] =  
+String commands[17] =  //doplnit prikaz na ulozenie inborn bias
 {
   "set"
 };
